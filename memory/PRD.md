@@ -1284,4 +1284,11 @@ Hasil lengkap: `memory/TEMUAN_AUDIT_MARKETING_SESI40.md`.
   punya pintu di layar** (`/detect` & `/source-groups` tidak dipanggil frontend sama sekali).
 * **Temuan P1 (uang/data)**: pencairan uji `SET-TEST-001` + jurnal POSTED `JE-20260820-0001`
   (Rp 10,1 jt) dan 559 pesanan uji TikTok Outfit Boutique tertinggal di data nyata.
-* Status: **DICATAT SEBAGAI TEMUAN, BELUM DIPERBAIKI** (arahan pemilik).
+* **Dikerjakan sesudah persetujuan pemilik (hari yang sama):** langkah 1 wizard impor dipulihkan
+  (6 kartu kelompok + panel **deteksi otomatis** yang membaca berkas lalu mengusulkan jenis beserta
+  buktinya), pencairan uji `SET-TEST-001` + jurnal POSTED-nya **di-void & dihapus**, dan 559 pesanan
+  uji **di-rollback** (rekap harian turunan ikut nol). Gate baru **INV-F45** (27 invarian) di
+  `gate.sh` menjaganya. Sisa temuan: T-5 (dua verifier ad-hoc perlu dibuat idempoten).
+* Aturan baru: **pencairan yang jurnalnya sudah VOID tidak lagi terkunci** — `_je_still_binding()`
+  di `routes/marketing_settlements.py` adalah SATU tempat aturan itu ditulis (dipakai PUT, DELETE,
+  dan `can.edit/journal` di layar detail).

@@ -322,10 +322,16 @@ def _weight(v, depth: int = 0) -> float:
     Kunci teknis (batas halaman, waktu pembuatan, penjelasan) DIBUANG supaya
     jawaban KOSONG tidak tampak sama-berisi hanya karena `limit: 50`.
     """
+    # SESI #40 — `sla_default`, `labels`, dan `named` ikut dibuang. Ketiganya
+    # KONSTANTA/penjelasan, bukan angka milik toko: `sla_default {normal:2,
+    # preorder:7}` menyumbang bobot 9 dan baris penjelas `gap.named` menyumbang 1,
+    # sehingga saat data memang KOSONG jawaban admin & staf sama-sama berbobot >0
+    # dan sweep menuduh kebocoran atas jawaban yang sebenarnya tidak memuat satu
+    # angka toko pun (terbukti: kedua jawaban seluruhnya 0/[] ).
     SKIP = {"ok", "success", "page", "page_size", "limit", "total_pages", "days",
             "has_next", "has_prev", "data_notes", "notes", "message", "detail",
             "generated_at", "status_filter", "period", "scope", "sort_by",
-            "period_days", "year", "month"}
+            "period_days", "year", "month", "sla_default", "labels", "named"}
     if depth > 4 or isinstance(v, bool):
         return 0.0
     if isinstance(v, (int, float)):

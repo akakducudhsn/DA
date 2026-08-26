@@ -197,6 +197,15 @@ export default function DataImportWizard({ token }) {
     () => types.filter((t) => t.group_key === groupKey && t.deprecated),
     [types, groupKey]);
 
+  // SESI #40 — SATU sumber angka untuk penghitung langkah 1. Sebelumnya header
+  // memakai `types.length` (22, TERMASUK jenis usang) sedangkan badge tiap kartu
+  // kelompok menghitung yang aktif saja (21) ⇒ satu layar memuat dua angka yang
+  // tampak bertentangan. Yang dipakai sekarang: jumlah jenis AKTIF, dan jenis
+  // usang disebut terpisah (bukan disembunyikan tanpa keterangan).
+  const activeTypeCount = useMemo(
+    () => types.filter((t) => !t.deprecated).length, [types]);
+  const deprecatedCount = types.length - activeTypeCount;
+
   // Usulan jenis dari isi berkas, DISARING ke kelompok yang dipilih. Peringkat &
   // buktinya tetap ditampilkan: deteksi otomatis mengUSULKAN, bukan memutuskan.
   const detectRanking = useMemo(() => {
@@ -237,6 +246,57 @@ export default function DataImportWizard({ token }) {
       }
     })();
   }, [authH, toast]);
+
+  /* ── SESI #37 — 6 KELOMPOK sebagai pintu pertama ──────────────────────────
+     Daftar kelompok datang dari backend (`SOURCE_GROUPS`), bukan disusun ulang
+     di browser: dua daftar untuk satu hal pasti berbeda suatu hari. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await axios.get(`${BASE}/source-groups`, { headers: authH });
+        setGroups(r.data?.groups || []);
+      } catch (e) {
+        toast({ title: 'Gagal memuat kelompok jenis data', variant: 'destructive' });
+      }
+    })();
+  }, [authH, toast]);
+
+  /* ── SESI #34 — SISTEM MEMBACA BERKAS DULU, LALU MENGUSULKAN JENIS ────────
+     Deteksi hanya MENGUSULKAN: hasilnya berperingkat + membawa buktinya
+     (platform, berapa kolom cocok, kolom wajib yang hilang). Keputusan tetap
+     di tangan staf — satu klik "Pakai jenis ini". */
+  const runDetect = useCallback(async (f) => {
+    if (!f) return;
+    setBusy('detect');
+    setDetectRes(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const r = await axios.post(`${BASE}/detect`, fd, { headers: authH });
+      setDetectRes(r.data || null);
+      setFile(f);              // berkas yang sama dipakai lagi di langkah unggah
+    } catch (e) {
+      toast({
+        title: 'Berkas tidak bisa dibaca',
+        description: e?.response?.data?.detail || 'Coba berkas ekspor aslinya (CSV/XLSX).',
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy('');
+    }
+  }, [authH, toast]);
+
+  /* Jenis usulan dipakai: pindah ke kelompoknya, dan kalau berkas hanya cocok
+     untuk SATU toko, toko itu langsung dipilih (staf tetap bisa menggantinya). */
+  const applyDetectedType = useCallback((key) => {
+    const t = types.find((x) => x.key === key);
+    if (!t) return;
+    setTypeKey(key);
+    setGroupKey(t.group_key || '');
+    const match = detectRes?.matching_accounts || [];
+    if (t.account_scope === 'required' && match.length === 1) setAccountId(match[0].id);
+    setStep(2);
+  }, [types, detectRes]);
 
   /* ── daftar toko (untuk menampilkan TUJUAN di setiap langkah) ── */
   useEffect(() => {
@@ -897,6 +957,13 @@ export default function DataImportWizard({ token }) {
           {/* pencarian — 17 jenis data tidak mungkin dihafal; tanpa ini staf menggulir
               melewati 6 grup untuk menemukan satu kartu */}
           <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-3">
+            {groupKey && (
+              <Button variant="outline" size="sm" className="h-9"
+                data-testid="import-group-back"
+                onClick={() => { setGroupKey(''); setTypeQuery(''); }}>
+                <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Semua kelompok
+              </Button>
+            )}
             <div className="relative flex-1 min-w-[240px]">
               <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -912,18 +979,171 @@ export default function DataImportWizard({ token }) {
               />
             </div>
             <span className="text-xs text-muted-foreground" data-testid="import-type-count">
-              {visibleTypes.length} dari {types.length} jenis data
+              {!groupKey && !typeQuery.trim()
+                ? `${activeTypeCount} jenis data dalam ${groups.length} kelompok`
+                  + (deprecatedCount ? ` · ${deprecatedCount} usang disembunyikan` : '')
+                : `${visibleTypes.length} dari ${activeTypeCount} jenis data`}
             </span>
+            {hiddenInGroup.length > 0 && (
+              <Button variant="ghost" size="sm" className="h-9 text-xs"
+                data-testid="import-toggle-deprecated"
+                onClick={() => setShowDeprecated((v) => !v)}>
+                {showDeprecated ? 'Sembunyikan' : 'Tampilkan'} {hiddenInGroup.length} jenis usang
+              </Button>
+            )}
           </div>
 
-          {types.length > 0 && visibleTypes.length === 0 && (
+          {/* ── PINTU PERTAMA: unggah dulu (deteksi) ATAU pilih kelompok ────────
+              Sebelum ini layar langsung meminta staf memilih 1 dari 22 jenis —
+              dan karena daftarnya disaring per kelompok, tanpa kelompok terpilih
+              layar tampak KOSONG ("0 dari 22"). Dua jalan sekarang tersedia:
+              biarkan sistem membaca berkasnya, atau pilih kelompoknya sendiri. */}
+          {!groupKey && !typeQuery.trim() && (
+            <div className="space-y-4" data-testid="import-step1-entry">
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--primary))]/40
+                bg-[hsl(var(--primary))]/5 p-4 space-y-3" data-testid="import-detect-panel">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-[hsl(var(--primary))]" />
+                      Belum tahu ini jenis data apa? Unggah berkasnya dulu
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Sistem membaca kolomnya, lalu <b>mengusulkan</b> jenis &amp; platform
+                      beserta buktinya. Usulan bukan keputusan — Anda yang memilih.
+                    </p>
+                  </div>
+                  <label className="shrink-0">
+                    <input type="file" className="hidden"
+                      accept=".csv,.xlsx,.xls,.xlsm,.tsv,.txt"
+                      data-testid="import-detect-file"
+                      onChange={(e) => runDetect(e.target.files?.[0])} />
+                    <span className="inline-flex items-center h-9 px-3 rounded-[var(--radius-sm)]
+                      text-sm font-medium cursor-pointer bg-[hsl(var(--primary))]
+                      text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity">
+                      {busy === 'detect'
+                        ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Membaca…</>
+                        : <><Upload className="w-4 h-4 mr-1.5" /> Periksa berkas</>}
+                    </span>
+                  </label>
+                </div>
+
+                {detectRes && (
+                  <div className="space-y-2" data-testid="import-detect-result">
+                    <p className="text-xs">
+                      <b>{detectRes.filename}</b> · {detectRes.file_size_kb} KB ·
+                      {' '}{(detectRes.headers || []).length} kolom ·
+                      {' '}<b>{detectRes.row_count}</b> baris data
+                      {detectRes.platform?.platform && (
+                        <> · platform terbaca <b>{String(detectRes.platform.platform).toUpperCase()}</b></>
+                      )}
+                    </p>
+                    {!detectRes.row_count && (
+                      <p className="text-xs rounded-[var(--radius-sm)] border border-red-500/40
+                        bg-red-500/10 p-2 text-red-700 dark:text-red-300"
+                        data-testid="import-detect-empty-file">
+                        <b>Berkas ini tidak punya satu pun baris data</b> (hanya baris kolom).
+                        Ekspor ulang dari Seller Center dengan rentang tanggal yang benar —
+                        mengunggahnya sekarang akan ditolak.
+                      </p>
+                    )}
+                    {detectRes.platform_warning && (
+                      <p className="text-xs rounded-[var(--radius-sm)] border border-amber-500/40
+                        bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300"
+                        data-testid="import-detect-platform-warning">
+                        {detectRes.platform_warning}
+                      </p>
+                    )}
+                    {(detectRes.platform?.evidence || []).length > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Bukti platform: {(detectRes.platform.evidence || []).slice(0, 6).join(' · ')}
+                      </p>
+                    )}
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {detectRanking.map((r, i) => {
+                        const key = r.source_type || r.key;
+                        const t = typeByKey[key];
+                        return (
+                          <div key={key || i}
+                            className={`rounded-[var(--radius-sm)] border p-2.5 bg-[hsl(var(--card))]
+                              ${i === 0 ? 'border-[hsl(var(--primary))]' : 'border-border'}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-sm font-semibold">{r.label || t?.label || key}</span>
+                              {i === 0 && (
+                                <Badge className="text-[10px] shrink-0 bg-[hsl(var(--primary))] text-white">
+                                  paling cocok
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              {r.mapped_columns}/{r.total_columns} kolom cocok ·
+                              {' '}kolom wajib {r.required_hit}/{r.required_total} ·
+                              {' '}skor {Math.round((r.score || 0) * 100)}%
+                            </p>
+                            {(r.required_missing || []).length > 0 && (
+                              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                                Kolom wajib belum ada: {(r.required_missing || []).join(', ')}
+                              </p>
+                            )}
+                            <Button size="sm" variant={i === 0 ? 'default' : 'outline'}
+                              className="h-7 mt-2 text-xs"
+                              data-testid={`import-detect-use-${key}`}
+                              disabled={!t}
+                              onClick={() => applyDetectedType(key)}>
+                              Pakai jenis ini <ArrowRight className="w-3 h-3 ml-1" />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {(detectRes.matching_accounts || []).length > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Toko berplatform sama: {(detectRes.matching_accounts || [])
+                          .map((a) => a.account_name).slice(0, 6).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  …atau pilih kelompoknya sendiri
+                </h4>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {groups.map((g) => (
+                    <button key={g.key}
+                      data-testid={`import-group-${g.key}`}
+                      onClick={() => setGroupKey(g.key)}
+                      className="text-left rounded-[var(--radius-md)] border border-border p-3
+                        bg-[hsl(var(--card))] transition hover:border-[hsl(var(--primary))]">
+                      <div className="font-semibold text-sm">
+                        {GROUP_ICON[g.label] || '📄'} {g.label}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">
+                        {g.describe}
+                      </p>
+                      <Badge variant="outline" className="text-[10px] mt-2">
+                        {(g.types || []).filter((t) => !t.deprecated).length} jenis data
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(groupKey || typeQuery.trim()) && types.length > 0 && visibleTypes.length === 0 && (
             <div className="rounded-[var(--radius-md)] border border-dashed border-border p-8 text-center"
               data-testid="import-type-empty">
               <p className="text-sm text-muted-foreground">
-                Tidak ada jenis data yang cocok dengan “{typeQuery}”.
+                {typeQuery.trim()
+                  ? `Tidak ada jenis data yang cocok dengan “${typeQuery}”.`
+                  : 'Kelompok ini belum punya jenis data yang aktif.'}
               </p>
-              <Button variant="outline" size="sm" className="mt-3" onClick={() => setTypeQuery('')}>
-                Tampilkan semua
+              <Button variant="outline" size="sm" className="mt-3"
+                onClick={() => { setTypeQuery(''); setGroupKey(''); }}>
+                Kembali ke daftar kelompok
               </Button>
             </div>
           )}

@@ -788,6 +788,18 @@ if [ $AUTH_READY -eq 1 ]; then
   run_gate "UANG — COGS pengiriman memakai biaya batch FIFO yang benar-benar keluar (INV-F44)" \
            "python3 scripts/verify_cogs_fifo_jurnal.py"
 
+  # ── INV-F45 (sesi #40) — IMPOR PINTAR PUNYA PINTU DI LAYAR ────────────────
+  # Dua fitur yang SUDAH ada di backend ternyata tidak pernah bisa dipakai:
+  #   · langkah 1 layar Impor Data menyaring jenis per KELOMPOK, tetapi tidak ada
+  #     satu pun tempat yang mengisi kelompoknya ⇒ layar menjawab "0 dari 22
+  #     jenis data" saat dibuka (satu-satunya jalan: mengetik kata kunci);
+  #   · `POST /data-import/detect` (usulan jenis dari isi berkas, sesi #34) tidak
+  #     dipanggil satu berkas frontend pun — fitur tanpa pintu = fitur yang tidak ada.
+  # Ikut dijaga: pencairan yang jurnalnya sudah DI-VOID tidak boleh tetap terkunci
+  # (pesannya menyuruh "void dulu", tetapi void tidak membuka apa pun ⇒ jalan buntu).
+  run_gate "LAYAR/UANG — impor pintar punya pintu + pencairan void tidak mengunci (INV-F45)" \
+           "python3 scripts/verify_impor_pintar_pintu_layar.py"
+
 else
   for g in "state machine jurnal" "nomor dokumen kembar" "batas nilai AR/AP" \
            "RBAC/IDOR" "input jahat 4xx" "endpoint kritis" \
@@ -830,7 +842,8 @@ else
            "Belanja mingguan · riwayat harga · ambang massal (INV-F38)" \
            "Pencairan marketplace di Portal Finance (INV-F42)" \
            "Margin katalog tidak dikarang (INV-F43)" \
-           "COGS pengiriman pakai biaya batch FIFO (INV-F44)"; do
+           "COGS pengiriman pakai biaya batch FIFO (INV-F44)" \
+           "Impor pintar punya pintu di layar (INV-F45)"; do
     skip_gate "$g" "backend/auth belum siap"
   done
 fi

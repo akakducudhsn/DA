@@ -1,3 +1,85 @@
+# [2026-08-26 #40] **AUDIT PORTAL MARKETING → IMPOR PINTAR DAPAT PINTU DI LAYAR** (INV-F45) + data uji dibersihkan
+
+Permintaan pemilik: *"untuk portal marketing, development sesi terakhir (7 hari kebelakang) sudahkah
+anda cek… apakah ada bug? cek dan evaluasi terlebih dahulu"* → audit dulu (temuan dicatat, tidak
+langsung diperbaiki), lalu pemilik memilih 3 pekerjaan: pulihkan wizard impor · hidupkan deteksi
+otomatis · bersihkan data uji. Temuan lengkap: `memory/TEMUAN_AUDIT_MARKETING_SESI40.md`.
+
+## A. Audit — 12 gate marketing HIJAU, tetapi DUA fitur ternyata tanpa pintu
+Alur impor diuji ujung-ke-ujung dengan **7 berkas ASLI pemilik** + Ekspor B/C sintetis
+(`scripts/audit_sesi40_impor_marketing.py` 30 OK · `scripts/audit_sesi40_undo_fulfillment.py` 17 OK):
+pratinjau = hasil commit, penjualan harian tidak melahirkan jurnal GL, rekap harian turunan dihitung
+ulang saat commit DAN rollback, status mundur/menghidupkan pesanan batal ditolak dengan alasan, dan
+perbaikan UNDO `update_only` sesi #38/#39 memang bekerja (6 diperbarui → 6 jejak → 5 dipulihkan +
+1 terminal dilaporkan jujur).
+
+Yang rusak justru di LAYAR:
+* **Langkah 1 "Impor Data" KOSONG** — daftar jenis disaring per kelompok (`group_key === groupKey`)
+  tetapi **tidak ada satu pun tempat yang mengisi `groupKey`**; pemilih 6 kelompok (sesi #37) tidak
+  pernah dirender. Layar menjawab **"0 dari 22 jenis data"**; satu-satunya jalan adalah menebak kata
+  kunci pencarian.
+* **Deteksi otomatis (sesi #34) tidak dipanggil frontend sama sekali** — `POST /data-import/detect`
+  dan `GET /source-groups` hidup & benar di backend (6/7 berkas asli dikenali tepat), tetapi tidak
+  ada satu berkas FE pun yang memanggilnya. Lint memperlihatkannya sebagai state mati
+  (`setGroups`, `setGroupKey`, `setDetectRes`, `setShowDeprecated`, `hiddenInGroup`, `detectRanking`).
+
+## B. Perbaikan
+1. **`DataImportWizard.jsx`** — langkah 1 sekarang punya DUA jalan: panel **"Belum tahu ini jenis
+   data apa? Unggah berkasnya dulu"** (memanggil `/detect`, menampilkan platform + bukti kolom +
+   4 usulan berperingkat dengan skor & kolom wajib yang hilang + tombol **"Pakai jenis ini"** yang
+   langsung mengisi jenis, kelompok, dan toko bila hanya satu yang cocok), atau **6 kartu kelompok**
+   dari `/source-groups`. Ditambah tombol **"Semua kelompok"**, penghitung yang jujur
+   ("22 jenis data dalam 6 kelompok"), tombol **jenis usang**, dan peringatan keras untuk berkas
+   **0 baris** sebelum diunggah.
+2. **`routes/marketing_settlements.py`** — helper baru `_je_still_binding()`: jurnal yang sudah
+   **void** tidak lagi mengunci pencairannya. Sebelumnya pesan "void jurnalnya dulu di Portal
+   Finance" mengarah ke jalan buntu (pemeriksanya hanya melihat ADA/TIDAK `je_id`), sehingga
+   pencairan salah-input tidak bisa diperbaiki maupun dihapus selamanya. Saat diperbaiki sesudah
+   void, tautan `je_*` DILEPAS (jejaknya disimpan di `je_voided_ref`) dan `can.edit/journal` di layar
+   detail memakai aturan yang SAMA.
+3. **Gate `test_core_f6_rbac_scope.py`** — `_weight()` membuang `sla_default`, `labels`, `named`.
+   Ketiganya KONSTANTA/penjelasan, bukan angka milik toko; saat data memang kosong keduanya membuat
+   jawaban admin & staf berbobot sama >0 sehingga sweep menuduh kebocoran atas jawaban yang
+   seluruhnya 0/[] (2 tuduhan palsu: `orders/fulfillment-monitor`, `settlements/reconcile`).
+
+## C. Data uji dibersihkan lewat PINTU RESMI (`scripts/cleanup_sesi40_artefak_uji.py --apply`)
+* Pencairan uji `SET-TEST-001` (Rp 8.000.000) → jurnal **JE-20260820-0001** yang sudah **POSTED**
+  (Rp 10.100.000) **di-void** (nilainya keluar dari buku besar lewat `_unmirror_lines`), lalu
+  pencairannya dihapus. Layar Pencairan Marketplace kembali **Rp 0 · 0 pencairan tercatat**.
+  Dokumen jurnal ber-status `voided` SENGAJA dibiarkan sebagai jejak audit pembatalan.
+* Sesi impor `00c29756…` (`TikTok_UntukDikirim_2026-07-19.xlsx`) di-**rollback**: **559 pesanan**
+  uji dihapus dan rekap harian turunan 10 tanggal ikut dihitung ulang ke 0.
+
+## D. Gate baru — INV-F45 (27 invarian)
+`scripts/verify_impor_pintar_pintu_layar.py`, terdaftar di `scripts/gate.sh`
+("LAYAR/UANG — impor pintar punya pintu + pencairan void tidak mengunci"). Menjaga: layar memanggil
+`/source-groups` & `/detect`, tidak ada state mati, **tidak ada jenis tanpa kelompok**, **tidak ada
+kelompok kosong** (akar bug layar kosong), usulan deteksi membawa bukti, berkas 0 baris dilaporkan
+apa adanya, dan siklus jurnal pencairan (POSTED mengunci → VOID melepas → bisa diperbaiki/dihapus).
+
+## E. Audit penguji independen (iteration_97) — 0 critical, 3 catatan kecil
+Penguji menulis `backend/tests/test_iter97_sesi40_impor_settlement.py` (**8 uji, 8 lulus**:
+`/source-groups`, `/source-types`, `/detect` termasuk berkas 0-baris & penolakan `.pdf` & wajib auth,
+serta siklus pencairan POST → dedupe 409 → jurnal → post → PUT/DELETE 400 → void → PUT/DELETE 200 →
+GET 404) dan mengulang seluruh alur layar. **Satu catatan diperbaiki langsung:** header langkah 1
+memakai `types.length` (**22**, termasuk jenis usang) sedangkan badge per kartu kelompok menghitung
+yang aktif (**21**) ⇒ satu layar memuat dua angka yang tampak bertentangan. Sekarang SATU sumber:
+`activeTypeCount` (**21**) dan jenis usang **disebut**, tidak disembunyikan tanpa keterangan —
+"21 jenis data dalam 6 kelompok · 1 usang disembunyikan"; penghitung per kelompok juga memakai basis
+yang sama ("7 dari 21"). Dua catatan lain dibiarkan sebagai backlog kecil (filter toko di layar
+Pencairan masih `<select>` HTML, dan 92 sesi impor staging yang tidak dilanjutkan belum punya TTL).
+
+## Bukti
+12 gate marketing HIJAU (termasuk INV-F6RBAC 100/100 sesudah tuduhan palsu ditutup) · INV-F45 27/27 ·
+audit E2E 30 OK + 17 OK · `npx eslint src/components/erp/marketing/DataImportWizard.jsx` 0 error ·
+3× `rebuild_frontend.sh` sukses · `pytest tests/test_iter97_sesi40_impor_settlement.py` 8/8 · layar diverifikasi Playwright (6 kartu kelompok · deteksi berkas
+asli Shopee → usulan `marketplace_orders` 93% → "Pakai jenis ini" → langkah 2) · 0 console error.
+
+## Pelajaran
+**State React yang dideklarasikan tapi tak pernah dipakai pada layar bisnis bukan sekadar lint** —
+itu tanda fitur yang HILANG saat berkas dipulihkan/di-refactor. Backend hijau + gate hijau tidak
+membuktikan fiturnya bisa dipakai; yang membuktikan hanya membuka layarnya.
+
 # [2026-08-26 #38] **COGS PENGIRIMAN MEMAKAI BIAYA BATCH YANG NYATA** (INV-F44) + PEMULIHAN CONTAINER
 
 Permintaan pemilik: *"lanjutkan development dari repo ini … sebelumnya development terhenti"*.

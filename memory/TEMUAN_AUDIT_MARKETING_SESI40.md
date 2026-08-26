@@ -32,7 +32,7 @@ Bukti perilaku penting yang memang benar:
 
 ## 2. TEMUAN
 
-### T-1 · P0 · LAYAR — langkah 1 "Impor Data" KOSONG kalau tidak mengetik kata kunci
+### T-1 · P0 · **SELESAI (sesi #40)** · LAYAR — langkah 1 "Impor Data" KOSONG kalau tidak mengetik kata kunci
 `frontend/src/components/erp/marketing/DataImportWizard.jsx`
 * `groupKey` awal `''` dan **`setGroupKey` tidak pernah dipanggil**; tanpa kata pencarian
   `visibleTypes = types.filter(t => t.group_key === groupKey)` ⇒ **selalu kosong**.
@@ -44,7 +44,7 @@ Bukti perilaku penting yang memang benar:
 * Dampak: staf hanya bisa menemukan jenis impor dengan **mengetik** kata kunci (mengetik "pesanan"
   → 6 dari 22 muncul). Pintu masuk utama modul impor tampak rusak/kosong saat dibuka.
 
-### T-2 · P0 · FITUR SESI #34 TANPA PINTU — deteksi otomatis jenis & platform tidak dipakai layar
+### T-2 · P0 · **SELESAI (sesi #40)** · FITUR SESI #34 TANPA PINTU — deteksi otomatis jenis & platform tidak dipakai layar
 * Backend HIDUP dan TERBUKTI BENAR: `POST /api/marketing/data-import/detect` mengenali 6 dari 7
   berkas asli pemilik dengan tepat (skor 0,89–1,0; platform shopee/tiktok benar).
 * Frontend **tidak pernah memanggilnya**: `setDetectRes` & `detectRanking` mati, tidak ada
@@ -53,7 +53,7 @@ Bukti perilaku penting yang memang benar:
 * Jadi janji sesi #34 ("sistem membaca berkas dulu lalu mengusulkan jenis") **belum ada di layar** —
   melanggar aturan repo "backend baru wajib punya pintu di layar".
 
-### T-3 · P1 · UANG — pencairan UJI tertinggal di data nyata beserta jurnal yang SUDAH DIPOSTING
+### T-3 · P1 · **SELESAI (sesi #40, jurnal di-void + pencairan dihapus)** · UANG — pencairan UJI tertinggal di data nyata beserta jurnal yang SUDAH DIPOSTING
 * `marketing_settlements`: `SET-TEST-001` · toko *Shopee Official Store DEMO* · dicairkan
   **Rp 8.000.000** · dibuat **2026-08-25 17:56** oleh `finance@dewiaditya.id`.
 * `rahaza_journal_entries`: **JE-20260820-0001** `je_status=posted`, total debit **Rp 10.100.000**,
@@ -62,7 +62,7 @@ Bukti perilaku penting yang memang benar:
   tercatat") dan masuk buku besar/neraca saldo.
 * Perlu keputusan: void jurnal + hapus pencairan, atau diakui sebagai data demo yang sengaja ada.
 
-### T-4 · P1 · DATA — 559 pesanan uji belum di-rollback
+### T-4 · P1 · **SELESAI (sesi #40, 559 pesanan di-rollback)** · DATA — 559 pesanan uji belum di-rollback
 * Sesi impor `00c29756-1d26-4abb-a2f9-d1933a12d060` (`TikTok_UntukDikirim_2026-07-19.xlsx`,
   commit **2026-08-26 02:23**, status `committed`) menyisakan **559 pesanan** di
   *TikTok Outfit Boutique* — satu-satunya toko yang punya pesanan di DB saat ini.
@@ -80,7 +80,7 @@ Bukti perilaku penting yang memang benar:
 * `_verify_f2_import_lock.py` → 1 FAIL dengan sebab yang sama ("impor pesanan: 559 masuk").
   Kontrak yang diuji (omzet turunan tidak ditimpa berkas, 423 periode terkunci) semuanya PASS.
 
-### T-6 · P2 · LAYAR — berkas 0 baris tetap diusulkan tanpa peringatan
+### T-6 · P2 · **SELESAI (sesi #40, panel deteksi memperingatkan)** · LAYAR — berkas 0 baris tetap diusulkan tanpa peringatan
 `samples/marketplace_2026/retur_refund_shopee.xls` = 46 kolom, **0 baris data**. `/detect`
 mengusulkan "Retur & Refund" skor 0,80 (`rows_readable: 0` ada di jawaban) tetapi tidak ada
 peringatan; staf baru tahu di langkah unggah (`400 Berkas tidak punya baris data`).
@@ -93,7 +93,23 @@ sudah diimpor (lihat §1).
 
 ---
 
-## 3. Usulan urutan perbaikan (belum dikerjakan — menunggu perintah pemilik)
+## 3. Status eksekusi (2026-08-26, sesudah persetujuan pemilik)
+**SELESAI:** T-1, T-2 (satu berkas `DataImportWizard.jsx` + 2× rebuild), T-3 & T-4 (dibersihkan lewat
+pintu resmi: void jurnal → hapus pencairan → rollback impor), T-6 (peringatan berkas 0 baris).
+Bonus yang ikut ditutup: pencairan yang jurnalnya sudah **void** tidak lagi terkunci
+(`_je_still_binding`), dan gate INV-F6RBAC berhenti menuduh 2 endpoint bocor atas jawaban kosong.
+Gate baru **INV-F45** (27 invarian) menjaga semuanya. Rincian: `memory/CHANGELOG.md` entri **[#40]**.
+
+**Diverifikasi penguji independen** (`/app/test_reports/iteration_97.json`, 0 critical / 0 bug layar);
+satu catatannya langsung ditutup: penghitung langkah 1 kini memakai SATU sumber angka
+("21 jenis data dalam 6 kelompok · 1 usang disembunyikan"), cocok dengan jumlah badge kartu.
+Backlog kecil dari penguji: filter toko layar Pencairan masih `<select>` HTML (tidak seragam dengan
+komponen Select shadcn), dan sesi impor staging yang tidak dilanjutkan (92 dokumen) belum punya TTL.
+
+**BELUM:** T-5 (dua verifier ad-hoc `_verify_f2/_f4` masih tidak idempoten & memaku tanggal —
+bukan regresi produk).
+
+## 4. Usulan urutan perbaikan (arsip rencana awal)
 1. **T-1 + T-2 sekaligus** (satu berkas, satu rebuild): panggil `/source-groups`, render 6 kartu
    kelompok, sambungkan `/detect` (unggah dulu → usulan jenis berperingkat + banner salah-pilih +
    pratinjau tabel mentah), hidupkan tombol "jenis usang". Ini memulihkan janji sesi #34 & #37.

@@ -109,9 +109,12 @@ for fn, plat in DETECT_EXPECT.items():
     elif not best.get("source_type"):
         bad(f"A-{fn}", "tidak ada usulan jenis impor sama sekali")
     elif not d.get("row_count"):
-        bad(f"A-{fn}", f"usulan={best.get('source_type')} TAPI 0 baris data terbaca "
-                       f"(kolom terbaca {len(d.get('headers') or [])}) — layar harus "
-                       f"mengatakan ini sebelum staf menekan Unggah")
+        # SESI #40 — berkas ekspor pemilik ini memang KOSONG (46 kolom, 0 baris).
+        # Sejak INV-F45 (F45-11) layar MEMPERINGATKANNYA di panel deteksi sebelum
+        # tombol Unggah ditekan, jadi ini bukan lagi temuan.
+        ok(f"A-{fn}", f"usulan={best.get('source_type')} · berkas memang 0 baris "
+                      f"({len(d.get('headers') or [])} kolom) — dilaporkan "
+                      f"`row_count=0` dan layar memperingatkan (INV-F45 F45-11)")
     else:
         ok(f"A-{fn}", f"platform={got_plat} · usulan={best.get('source_type')} "
                       f"(skor {best.get('score')}) · {d.get('row_count')} baris")

@@ -430,3 +430,38 @@ untuk satu angka rupiah.
 
 ⚠️ **Jangan** menambahkan sumber biaya COGS ketiga. Kalau butuh dasar baru, ia harus lewat
 `_fifo_cogs_for_dispatch` dan **menyebut namanya** di `basis`.
+
+## INV-F45 (2026-08-26, sesi #40) — IMPOR PINTAR PUNYA PINTU DI LAYAR · PENCAIRAN VOID TIDAK MENGUNCI
+Penjaga: `scripts/verify_impor_pintar_pintu_layar.py` (27 invarian, membersihkan artefaknya sendiri).
+
+**Kenapa ada:** audit sesi #40 menemukan DUA fitur yang tercatat "selesai" tetapi tidak pernah bisa
+dipakai — bukan karena error, melainkan karena tidak ada pintunya di layar:
+1. Langkah 1 layar **Impor Data** menyaring daftar jenis per KELOMPOK
+   (`group_key === groupKey`), tetapi **tidak ada satu pun tempat yang mengisi `groupKey`** —
+   pemilih 6 kelompok (sesi #37) tidak pernah dirender. Layar menjawab **"0 dari 22 jenis data"**
+   saat dibuka; satu-satunya jalan adalah menebak kata kunci pencarian.
+2. **Deteksi otomatis** (`POST /api/marketing/data-import/detect`, sesi #34 butir B) hidup dan
+   benar di backend, tetapi **tidak dipanggil satu berkas frontend pun**. Fitur tanpa pintu =
+   fitur yang tidak ada.
+3. Bonus temuan yang ikut dikunci: pencairan marketplace yang jurnalnya sudah **di-void** tetap
+   terkunci. Pesan penolakannya menyuruh "void jurnalnya dulu di Portal Finance", padahal
+   pemeriksanya hanya melihat ADA/TIDAK `je_id` ⇒ jalan buntu: pencairan salah-input tidak bisa
+   diperbaiki maupun dihapus selamanya.
+
+- **F45-1..5** layar memanggil `/source-groups` & `/detect`, `setGroupKey` benar-benar dipakai,
+  6 `data-testid` kunci ada, dan tidak ada state yang mati (`groups`, `detectRes`, `showDeprecated`)
+- **F45-6..8** kontrak backend: ≥5 kelompok & ≥10 jenis · **tidak ada jenis tanpa kelompok** ·
+  **tidak ada kelompok kosong** (kartu yang diklik selalu berisi — akar bug "layar kosong")
+- **F45-9,10** deteksi atas berkas ASLI pemilik mengusulkan jenis yang benar **beserta buktinya**
+  (kolom cocok, kolom wajib, skor)
+- **F45-11** berkas 46 kolom **0 baris** dilaporkan `row_count=0` ⇒ layar memperingatkan SEBELUM
+  unggah, bukan menolaknya di langkah berikutnya
+- **F45-12..15** selama jurnal pencairan HIDUP: hapus & ubah ditolak **400**
+- **F45-16..19** sesudah jurnal **void**: angka bisa diperbaiki (tautan `je_id` DILEPAS,
+  `can.edit` hidup lagi) dan pencairannya bisa dihapus
+- **F45-20** alat ukur tidak meninggalkan jurnal/pencairan uji
+
+⚠️ **Aturan yang lahir dari sini:** state React yang dideklarasikan tetapi tidak pernah dipakai
+(`setX` tanpa pemanggil) pada layar bisnis **bukan sekadar lint** — itu tanda fitur yang hilang saat
+berkas dipulihkan/di-refactor. Jalankan `npx eslint src/components/erp/marketing` sesudah menyentuh
+layar marketing.

@@ -349,6 +349,23 @@ async def create_settlement(body: SettlementIn, request: Request):
     return {"ok": True, "data": _ser(doc)}
 
 
+async def _je_still_binding(db, doc: dict) -> bool:
+    """Apakah jurnal pencairan ini masih MENGIKAT angka sumbernya?
+
+    SESI #40 — jurnal yang sudah **void** tidak mengikat apa pun: nilainya sudah
+    dikeluarkan dari buku besar. Sebelum ini pemeriksaannya hanya melihat ADA/TIDAK
+    `je_id`, sehingga pesan "void jurnalnya dulu" mengarah ke jalan buntu —
+    pencairan salah-input tidak bisa diperbaiki maupun dihapus selamanya.
+    """
+    je_id = doc.get("je_id")
+    if not je_id:
+        return False
+    je = await db.rahaza_journal_entries.find_one({"id": je_id}, {"_id": 0, "status": 1})
+    if not je:
+        return False          # jurnalnya sudah tidak ada (draft dihapus Finance)
+    return je.get("status") != "voided"
+
+
 @router.put("/{sid}")
 async def update_settlement(sid: str, body: SettlementIn, request: Request):
     await _require_finance(request)
@@ -358,13 +375,20 @@ async def update_settlement(sid: str, body: SettlementIn, request: Request):
         raise HTTPException(404, "Pencairan tidak ditemukan.")
     # Sudah ada jurnal ⇒ angkanya sudah dipakai akuntansi. Mengubahnya diam-diam
     # akan membuat jurnal dan sumbernya bercerita hal berbeda.
-    if cur.get("je_id"):
+    # SESI #40 — jurnal yang SUDAH DI-VOID tidak lagi mengikat: pesan penolakan di
+    # bawah menyuruh "void dulu", tetapi sebelum ini void tidak membuka apa pun
+    # sehingga pencairan salah-input terkunci selamanya (tidak bisa diperbaiki
+    # maupun dihapus). Tautan jurnalnya dilepas supaya jejaknya tetap jelas.
+    if await _je_still_binding(db, cur):
         raise HTTPException(
             400, f"Pencairan ini sudah punya jurnal ({cur.get('je_number')}). "
                  f"Batalkan/void jurnalnya dulu di Portal Finance sebelum "
                  f"mengubah angkanya — kalau tidak, jurnal dan sumbernya akan "
                  f"menyebut angka yang berbeda.")
     upd = body.dict()
+    if cur.get("je_id"):
+        upd.update({"je_id": None, "je_number": None, "je_status": None,
+                    "je_voided_ref": cur.get("je_number")})
     upd["updated_at"] = _now()
     merged = {**cur, **upd}
     _with_math(merged)
@@ -382,7 +406,7 @@ async def delete_settlement(sid: str, request: Request):
     cur = await db[COLL].find_one({"id": sid}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "Pencairan tidak ditemukan.")
-    if cur.get("je_id"):
+    if await _je_still_binding(db, cur):
         raise HTTPException(
             400, f"Tidak bisa dihapus: sudah terbit jurnal {cur.get('je_number')}. "
                  f"Void jurnalnya dulu di Portal Finance.")
@@ -786,6 +810,7 @@ async def get_settlement(sid: str, request: Request):
          "coa_cash_code": 1, "coa_revenue_code": 1, "coa_receivable_code": 1}) or {}
     coa_ready = bool((account.get("coa_cash_code") or "").strip()
                      and (account.get("coa_revenue_code") or "").strip())
+    binding = await _je_still_binding(db, doc)
     return {
         "ok": True,
         "data": _ser(doc),
@@ -805,8 +830,10 @@ async def get_settlement(sid: str, request: Request):
                      "Akun."),
         },
         "can": {
-            "edit": not bool(doc.get("je_id")),
-            "journal": bool(doc.get("math_verified")) and not doc.get("je_id") and coa_ready,
+            # SESI #40 — jurnal yang sudah void tidak lagi mengunci pencairannya
+            # (satu aturan, dipakai bersama PUT/DELETE lewat `_je_still_binding`).
+            "edit": not binding,
+            "journal": bool(doc.get("math_verified")) and not binding and coa_ready,
             "post": doc.get("je_status") == "draft",
         },
     }
